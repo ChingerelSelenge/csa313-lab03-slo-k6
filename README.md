@@ -13,7 +13,7 @@ $ k6 v2.2.0
 
 ## Хийсэн ажил
 
-`server.js`-д гурван endpoint-той локал API (`/cart/add`, `/report`, `/pay`) босгож, тус бүрд чанарын сценарио бичээд, SLO болгож, `slo-test.js`-д k6 threshold болгож кодчиллоо. 
+`server.js`-д гурван endpoint-той локал API (`/cart/add`, `/report`, `/pay`) босгож, тус бүрд чанарын сценарио бичээд, SLO болгож, `slo-test.js`-д k6 threshold болгож кодчиллоо. Дараа нь chaos туршилт хийж, threshold-оо зориуд эвдэж баталгаажуулав.
 
 ---
 
@@ -120,3 +120,47 @@ availability = амжилттай checks / нийт checks = 5028 / 5643 = 89.10
 Тийм, `http_req_failed{name:pay}` мөн FAIL болсон (14.56% > 8%). Учир нь сервер унасан үед `/pay`-ийн хүсэлт бүр л амжилтгүй болдог — нэг эвдрэл (crash) нэг дор availability, reliability гэсэн хоёр SLO-г зэрэг зөрчдөг. Хоёр SLI-г бие даан хянахын тулд `/pay`-ийн алдааг зөвхөн serverr-ийн бизнес-логикоос (жишээ: `Math.random()<0.05` санамсаргүй алдаа) үүссэн 5xx-ийг тоолж, харин `connection refused`/timeout шалтгаантай алдааг тусад нь ангилж, зөвхөн availability SLI-д тооцох хэрэгтэй.
 
 ---
+
+## FAIL үр дүн — results/fail.txt
+
+`slo-test-fail.js`-д `/report`-ын threshold-ыг `p(95)<100`мс болгож зориуд эвдсэн (сервер 200мс-ээс хурдан хэзээ ч хариулдаггүй тул найдвартай FAIL гарна):
+
+```
+$ k6 run slo-test-fail.js 2>&1 | tee results/fail.txt; echo "exit=$?"
+```
+Үр дүн results/fail.txt -д хадгалагдсан.
+
+FAIL threshold мөр: 
+http_req_duration{name:report} ✗ 'p(95)<100' p(95)=392.01ms
+
+Энд /report endpoint-ийн бодит p95 response time 392.01 ms байсан боловч threshold нь 100 ms-ээс бага гэж тохируулсан тул SLO threshold зөрчигдөж, k6 exit code 99-тэй дууссан.
+
+---
+
+## Дүгнэлт (8-10 өгүүлбэр)
+
+Энэ лабораторийн ажлаар чанарын сценариог SLO болгон тодорхойлж, тэдгээрийг k6-ийн threshold хэлбэрээр хэмжиж болохыг ойлголоо. Сценарио → SLO → threshold шилжилтийн үед хамгийн хэцүү байсан хэсэг нь хэрэглэгчийн шаардлагыг яг ямар хэмжүүрээр илэрхийлэхээ сонгох байсан. Эхэндээ threshold-ийг хэт сул тавихгүйгээр бодит baseline үр дүнд тулгуурлан сонгох нь илүү зөв гэдгийг туршилтаар харлаа. Жишээлбэл, /cart/add endpoint-ийн baseline p95 нь 2.46мс байсан тул p95 < 5мс босгыг сонгосон. Chaos туршилтаар серверийг зориудаар зогсооход availability 89.10% болж, 90%-ийн SLO зөрчигдсөнөөр availability threshold бодит эвдрэлд мэдрэг болохыг баталсан. Мөн time-based error budget болон request-based availability хоёр ижил зүйл биш бөгөөд серверийн downtime-ийн үед хүсэлт боловсруулах хурд өөрчлөгддөгөөс шалтгаалан үр дүн зөрж болохыг ойлголоо. Сервер унах үед /pay-ийн connection refused алдаанууд нэмэгдсэнээр reliability-ийн 8%-ийн босго мөн зөрчигдсөн нь нэг серверийн эвдрэл олон төрлийн SLO-д зэрэг нөлөөлж болохыг харуулсан. Харин зориуд /report-ын threshold-ийг p95 < 100мс болгож эвдэхэд бодит p95 нь 392.01мс гарч, k6 exit code 99-өөр FAIL болсон нь threshold ажиллаж байгааг баталсан. Дараагийн удаа SLO тодорхойлохдоо availability болон reliability-ийн алдааны шалтгааныг илүү нарийн ангилж, бизнесийн алдаа болон серверийн хүртээмжийн алдааг тусдаа хэмжихээр төлөвлөнө. Энэ лаборатори нь SLO-г зөвхөн тоон босго биш, бодит системийн төлөв, ачаалал, эвдрэл болон хэмжилтийн нөхцөлтэй хамт тодорхойлох хэрэгтэйг ойлгууллаа.
+
+---
+
+## Ажиллуулах заавар
+
+```bash
+npm install
+node server.js &
+mkdir -p results
+k6 run slo-test.js 2>&1 | tee results/pass.txt
+k6 run slo-test-fail.js 2>&1 | tee results/fail.txt; echo "exit=$?"
+```
+
+## Файлын бүтэц
+
+```
+server.js            — локал API (/cart/add, /report, /pay)
+slo-test.js          — SLO threshold-той k6 скрипт (PASS хувилбар)
+slo-test-fail.js     — зориуд эвдсэн threshold-той k6 скрипт (FAIL хувилбар)
+results/pass.txt     — бүх threshold PASS гаралт
+results/chaos.txt    — chaos туршилтын бүтэн гаралт
+results/fail.txt     — зориуд эвдсэн threshold-ийн гаралт, exit code-той
+screenshots - баримт, нотолгоо
+```
